@@ -37,6 +37,4 @@ class DeviceManager extends Actor with ActorLogging{
       groupIdToActor -= groupId
 
   }
-
-  }
 }

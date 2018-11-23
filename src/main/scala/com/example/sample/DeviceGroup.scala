@@ -1,48 +1,83 @@
 package com.example.sample
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props, Terminated}
-import com.example.sample.DeviceGroup.{ReplyDeviceList, RequestDeviceList}
+import com.example.sample.DeviceGroup.{ReplyDeviceList, RequestAllTemperatures, RequestDeviceList}
 import com.example.sample.DeviceManager.RequestTrackDevice
+import scala.concurrent.duration._
 
 object DeviceGroup {
-  def props(groupId:String) = Props(new DeviceGroup(groupId))
+  def props(groupId: String): Props = Props(new DeviceGroup(groupId))
 
+  //#device-group-register
   final case class RequestDeviceList(requestId: Long)
   final case class ReplyDeviceList(requestId: Long, ids: Set[String])
-}
 
-class DeviceGroup(groupId:String) extends Actor with ActorLogging{
+  //#query-protocol
+  final case class RequestAllTemperatures(requestId: Long)
+  final case class RespondAllTemperatures(requestId: Long, temperatures: Map[String, TemperatureReading])
+  sealed trait TemperatureReading
+  final case class Temperature(value: Double) extends TemperatureReading
+  case object TemperatureNotAvailable extends TemperatureReading
+  case object DeviceNotAvailable extends TemperatureReading
+  case object DeviceTimedOut extends TemperatureReading
+
+}
+//#device-group-register
+//#device-group-register
+//#device-group-remove
+
+class DeviceGroup(groupId: String) extends Actor with ActorLogging {
   var deviceIdToActor = Map.empty[String, ActorRef]
+  //#device-group-register
   var actorToDeviceId = Map.empty[ActorRef, String]
+  //#device-group-register
 
   override def preStart(): Unit = log.info("DeviceGroup {} started", groupId)
+
   override def postStop(): Unit = log.info("DeviceGroup {} stopped", groupId)
 
-
   override def receive: Receive = {
-    case trackMsg @ RequestTrackDevice(`groupId`, _) =>
+    case trackMsg @ RequestTrackDevice(`groupId`, _) ⇒
       deviceIdToActor.get(trackMsg.deviceId) match {
-        case Some(deviceActor) =>
+        case Some(deviceActor) ⇒
           deviceActor forward trackMsg
-        case None =>
+        case None ⇒
           log.info("Creating device actor for {}", trackMsg.deviceId)
           val deviceActor = context.actorOf(Device.props(groupId, trackMsg.deviceId), s"device-${trackMsg.deviceId}")
+          //#device-group-register
+          context.watch(deviceActor)
+          actorToDeviceId += deviceActor -> trackMsg.deviceId
+          //#device-group-register
           deviceIdToActor += trackMsg.deviceId -> deviceActor
           deviceActor forward trackMsg
       }
+
     case RequestTrackDevice(groupId, deviceId) ⇒
       log.warning(
         "Ignoring TrackDevice request for {}. This actor is responsible for {}.",
         groupId, this.groupId
       )
+    //#device-group-register
+    //#device-group-remove
+
+    case RequestDeviceList(requestId) ⇒
+      sender() ! ReplyDeviceList(requestId, deviceIdToActor.keySet)
+    //#device-group-remove
+
     case Terminated(deviceActor) ⇒
-      val lala = deviceActor
       val deviceId = actorToDeviceId(deviceActor)
       log.info("Device actor for {} has been terminated", deviceId)
       actorToDeviceId -= deviceActor
       deviceIdToActor -= deviceId
-    case RequestDeviceList(requestId) ⇒
-      sender() ! ReplyDeviceList(requestId, deviceIdToActor.keySet)
+    //#device-group-register
+
+    case RequestAllTemperatures(requestId) ⇒
+      context.actorOf(DeviceGroupQuery.props(
+        actorToDeviceId = actorToDeviceId,
+        requestId = requestId,
+        requester = sender(),
+        3.seconds
+      ))
   }
 }
 
