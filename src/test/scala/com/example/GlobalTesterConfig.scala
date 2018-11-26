@@ -1,5 +1,5 @@
 package com.example
 
 object GlobalTesterConfig {
-  val LuceneDirectory = ""
+  val LuceneDirectory = "ForLucene"
 }
